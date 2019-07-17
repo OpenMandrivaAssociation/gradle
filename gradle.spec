@@ -9,8 +9,8 @@
 %global __noautoprov '^.*$'
 
 Name:           gradle
-Version:	5.4.1
-Release:        2
+Version:	5.5.1
+Release:	1
 Summary:        The Gradle build tool
 License:        Apache 2.0
 URL:            http://gradle.org/
