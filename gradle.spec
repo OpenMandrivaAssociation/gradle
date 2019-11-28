@@ -9,7 +9,7 @@
 %global __noautoprov '^.*$'
 
 Name:           gradle
-Version:	6.0
+Version:	6.0.1
 Release:	1
 Summary:        The Gradle build tool
 License:        Apache 2.0
