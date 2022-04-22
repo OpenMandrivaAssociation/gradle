@@ -1,6 +1,7 @@
 # FIXME this package is severely broken.
 # It should build from source instead of pulling in
 # a potentially untrusted binary.
+# (At least while not bootstrapping)
 
 %global __jar_repack 0
 %global __provides_exclude_from .*
@@ -9,7 +10,7 @@
 %global __noautoprov '^.*$'
 
 Name:           gradle
-Version:	6.0.1
+Version:	7.4.2
 Release:	1
 Summary:        The Gradle build tool
 License:        Apache 2.0
@@ -17,7 +18,7 @@ URL:            http://gradle.org/
 Group:		Development/Tools
 BuildArch:      noarch
 
-Source0:        http://services.gradle.org/distributions/gradle-%{version}-bin.zip
+Source0:        https://services.gradle.org/distributions/gradle-%{version}-bin.zip
 
 Requires:       javapackages-tools
 Requires:       java-devel
@@ -41,7 +42,7 @@ continuous integration servers including Eclipse, IntelliJ, and Jenkins.
 install -d -m 755 %{buildroot}%{_datadir}/%{name}/
 unzip %{SOURCE0}
 rm -rf gradle-%{version}/bin/gradle.bat
-mv gradle-%{version}/{LICENSE,NOTICE,getting-started.html} .
+mv gradle-%{version}/{LICENSE,NOTICE} .
 cp -a gradle-%{version}/* %{buildroot}%{_datadir}/%{name}/
 install -d -m 755 %{buildroot}%{_bindir}/
 ln -s %{_datadir}/%{name}/bin/gradle %{buildroot}%{_bindir}/%{name}
@@ -49,4 +50,4 @@ ln -s %{_datadir}/%{name}/bin/gradle %{buildroot}%{_bindir}/%{name}
 %files
 %{_bindir}/%{name}
 %{_datadir}/%{name}
-%doc LICENSE NOTICE getting-started.html
+%doc LICENSE NOTICE
