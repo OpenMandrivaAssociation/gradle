@@ -14,7 +14,7 @@ Version:	8.6
 Release:	1
 Summary:        The Gradle build tool
 License:        Apache 2.0
-URL:            http://gradle.org/
+URL:            https://gradle.org/
 Group:		Development/Tools
 BuildArch:      noarch
 
