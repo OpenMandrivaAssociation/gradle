@@ -1,0 +1,1149 @@
+--- a/build-logic/build-update-utils/src/main/kotlin/gradlebuild/buildutils/tasks/UpdateAgpVersions.kt
++++ b/build-logic/build-update-utils/src/main/kotlin/gradlebuild/buildutils/tasks/UpdateAgpVersions.kt
+@@ -164,7 +164,11 @@
+             }.map { (_, versions) ->
+                 versions.last()
+             }
+-            val gradleMajor = VersionNumber.version(currentGradleVersion.majorVersion)
++            // GradleVersion.majorVersion exists since 9.0. Parse the version string so this
++            // also compiles against the Gradle 8.11 API used to bootstrap the build.
++            val gradleMajor = VersionNumber.version(
++                currentGradleVersion.version.substringBefore('.').substringBefore('-').toInt()
++            )
+             val minimumFallback = when {
+ 
+                 allMinorLatests.any { it.major >= gradleMajor.major && it.isStable } -> {
+--- a/build-logic/build-update-utils/src/main/kotlin/gradlebuild.root-target-runtimes.gradle.kts
++++ b/build-logic/build-update-utils/src/main/kotlin/gradlebuild.root-target-runtimes.gradle.kts
+@@ -11,7 +11,8 @@
+ 
+ // Computes a map of all projects in the full Gradle distribution to their target runtime details file.
+ val targetRuntimeDetails: Provider<Map<String, File>> = configurations.resolvable("fullDistributionRuntimeClasspath") {
+-    extendsFrom(runtimeAware)
++    // Gradle 9 accepts a Provider. Gradle 8.11 only accepts Configuration.
++    extendsFrom(runtimeAware.get())
+     configureAsRuntimeJarClasspath(objects)
+ }.flatMap {
+     it.incoming.artifactView {
+--- a/build-logic/build-update-utils/src/main/kotlin/gradlebuild.update-versions.gradle.kts
++++ b/build-logic/build-update-utils/src/main/kotlin/gradlebuild.update-versions.gradle.kts
+@@ -12,8 +12,15 @@
+     id("gradlebuild.module-identity")
+ }
+ 
+-tasks.named<UpdateDaemonJvm>("updateDaemonJvm") {
+-    languageVersion = JavaLanguageVersion.of(25)
++tasks.named("updateDaemonJvm").configure {
++    // languageVersion replaced jvmVersion in Gradle 8.13. The 8.11 bootstrap
++    // that compiles this script only has jvmVersion; Gradle 9 only has languageVersion.
++    val getter = javaClass.methods.firstOrNull { it.name == "getLanguageVersion" && it.parameterCount == 0 }
++        ?: javaClass.methods.firstOrNull { it.name == "getJvmVersion" && it.parameterCount == 0 }
++        ?: return@configure
++    val property = getter.invoke(this)
++    org.gradle.api.provider.Property::class.java.getMethod("set", Any::class.java)
++        .invoke(property, JavaLanguageVersion.of(25))
+ }
+ 
+ tasks.withType<UpdateReleasedVersions>().configureEach {
+--- a/build-logic/buildquality/src/main/kotlin/gradlebuild/incubation/tasks/IncubatingApiReportTask.kt
++++ b/build-logic/buildquality/src/main/kotlin/gradlebuild/incubation/tasks/IncubatingApiReportTask.kt
+@@ -25,12 +25,16 @@
+ abstract class IncubatingApiReportTask : DefaultTask() {
+ 
+     private val additionalClasspath = project.objects.fileCollection().apply {
+-        val libs = project.the<VersionCatalogsExtension>().named("buildLibs")
++        // Accessor generation applies this plugin to a synthetic project with no catalogs.
++        val found = project.extensions.findByType(VersionCatalogsExtension::class.java)?.find("buildLibs")
++        val libs = if (found != null && found.isPresent) found.get() else return@apply
+         from(
+             project.configurations.detachedConfiguration(
+                 project.dependencies.create(libs.findLibrary("kotlinCompilerEmbeddable").get().get().copy().apply {
+                     version {
+-                        strictly(embeddedKotlinVersion)
++                        if (embeddedKotlinVersion.startsWith("2.4")) {
++                            strictly(embeddedKotlinVersion)
++                        }
+                     }
+                 }),
+             )
+--- a/build-logic/buildquality/src/main/kotlin/gradlebuild/removal/tasks/NextMajorRemovalReportTask.kt
++++ b/build-logic/buildquality/src/main/kotlin/gradlebuild/removal/tasks/NextMajorRemovalReportTask.kt
+@@ -41,12 +41,16 @@
+ 
+     // Mirrors IncubatingApiReportTask: the worker hosts the Kotlin compiler embeddable to parse Kotlin sources.
+     private val additionalClasspath = project.objects.fileCollection().apply {
+-        val libs = project.the<VersionCatalogsExtension>().named("buildLibs")
++        // Accessor generation applies this plugin to a synthetic project with no catalogs.
++        val found = project.extensions.findByType(VersionCatalogsExtension::class.java)?.find("buildLibs")
++        val libs = if (found != null && found.isPresent) found.get() else return@apply
+         from(
+             project.configurations.detachedConfiguration(
+                 project.dependencies.create(libs.findLibrary("kotlinCompilerEmbeddable").get().get().copy().apply {
+                     version {
+-                        strictly(embeddedKotlinVersion)
++                        if (embeddedKotlinVersion.startsWith("2.4")) {
++                            strictly(embeddedKotlinVersion)
++                        }
+                     }
+                 }),
+             )
+--- a/build-logic/dependency-modules/src/main/kotlin/gradlebuild/modules/model/License.kt
++++ b/build-logic/dependency-modules/src/main/kotlin/gradlebuild/modules/model/License.kt
+@@ -99,6 +99,21 @@
+         "MIT License",
+         "https://opensource.org/licenses/MIT",
+         listOf("The MIT License", "MIT License", "MIT"),
++    ),
++    CC0(
++        "CC0 1.0 Universal",
++        "https://creativecommons.org/publicdomain/zero/1.0/",
++        listOf("CC0 1.0 Universal"),
++    ),
++    PublicDomain(
++        "Public Domain",
++        "http://www.xmlpull.org/v1/download/unpacked/LICENSE.txt",
++        listOf("Public Domain"),
++    ),
++    IndianaExtreme(
++        "Indiana University Extreme! Lab Software License, Version 1.2",
++        "https://raw.githubusercontent.com/x-stream/mxparser/v-1.2.3/LICENSE.txt",
++        listOf("Indiana University Extreme! Lab Software License, Version 1.2"),
+     );
+ 
+     companion object {
+--- a/build-logic/documentation/build.gradle.kts
++++ b/build-logic/documentation/build.gradle.kts
+@@ -18,6 +18,7 @@
+     }
+     implementation(buildLibs.flexmark)
+     implementation(buildLibs.gson)
++    implementation(buildLibs.jsoup)
+     implementation(buildLibs.commonsLang3)
+     implementation(buildLibs.asciidoctor)
+     implementation(buildLibs.asciidoctorJvm)
+--- a/build-logic/integration-testing/src/main/kotlin/gradlebuild/integrationtests/ide/IdeSystemPropertiesProvider.kt
++++ b/build-logic/integration-testing/src/main/kotlin/gradlebuild/integrationtests/ide/IdeSystemPropertiesProvider.kt
+@@ -70,7 +70,9 @@
+     @get:Optional
+     @get:Nested
+     @Suppress("UNUSED") // required to ensure that the installation directory is treated as an input
+-    val installationProvider = autoDownload.map { if (it) installation else null }
++    // Provider.map on Gradle 8.11 rejects a null result. filter().map keeps a non-null value
++    // and stays empty when auto-download is off, which is what @Optional expects.
++    val installationProvider = autoDownload.filter { it }.map { installation }
+ 
+     override fun asArguments(): Iterable<String> {
+         val systemProperties = mutableListOf<String>()
+--- a/build-logic/integration-testing/src/main/kotlin/gradlebuild.integration-tests.gradle.kts
++++ b/build-logic/integration-testing/src/main/kotlin/gradlebuild.integration-tests.gradle.kts
+@@ -53,7 +53,8 @@
+ 
+     dependencies.apply {
+         // Use a provider so we don't lookup the project when we generate accessors
+-        addLater(provider { dependencyFactory.createProjectDependency(":internal-integ-testing") })
++        // createProjectDependency(String) is Gradle 9. project(Map) exists on 8.11 and 9.
++        addLater(provider { project.dependencies.project(mapOf("path" to ":internal-integ-testing")) })
+     }
+ }
+ 
+@@ -64,6 +65,11 @@
+     // This test task runs only multi-version tests and is intended to be used in the late pipeline to sweep up versions not previously tested
+     includeSpockAnnotation("org.gradle.integtests.fixtures.compatibility.MultiVersionTestCategory")
+     (options as JUnitPlatformOptions).includeEngines("spock")
+-    failOnNoDiscoveredTests.set(false)
++    // failOnNoDiscoveredTests is Gradle 9. Leave the 8.11 default when the property is absent.
++    val failOnNone = javaClass.methods.firstOrNull { it.name == "getFailOnNoDiscoveredTests" && it.parameterCount == 0 }
++    if (failOnNone != null) {
++        val property = failOnNone.invoke(this)
++        org.gradle.api.provider.Property::class.java.getMethod("set", Any::class.java).invoke(property, false)
++    }
+     setSystemPropertiesOfTestJVM("all")
+ }
+--- a/build-logic/jvm/src/main/kotlin/gradlebuild/startscript/tasks/GradleStartScriptGenerator.kt
++++ b/build-logic/jvm/src/main/kotlin/gradlebuild/startscript/tasks/GradleStartScriptGenerator.kt
+@@ -19,9 +19,9 @@
+ import org.gradle.api.DefaultTask
+ import org.gradle.api.file.ConfigurableFileCollection
+ import org.gradle.api.file.DirectoryProperty
++import org.gradle.api.file.FileCollection
+ import org.gradle.api.internal.file.temp.TemporaryFileProvider
+ import org.gradle.api.internal.plugins.DefaultTemplateBasedStartScriptGenerator
+-import org.gradle.api.internal.plugins.ExecutableJar
+ import org.gradle.api.internal.plugins.StartScriptGenerator
+ import org.gradle.api.internal.plugins.StartScriptTemplateBindingFactory
+ import org.gradle.api.internal.resources.FileCollectionBackedTextResource
+@@ -79,13 +79,41 @@
+     @TaskAction
+     fun generate() {
+         logging.captureStandardOutput(LogLevel.INFO)
+-        val generator = StartScriptGenerator(createUnixStartScriptGenerator(), createWindowsStartScriptGenerator())
++        // Gradle 9 records the launcher as an executable jar plus a git ref.
++        // Gradle 8.11 only has main-class + classpath. The bootstrap compiler is 8.11.1.
++        val gitRef = scriptTemplateGitRef.get()
++        val executableJarClass = try {
++            Class.forName("org.gradle.api.internal.plugins.ExecutableJar")
++        } catch (_: ClassNotFoundException) {
++            null
++        }
++        // The 9.x unix template mentions ${gitRef}. Gradle 8.11's binding does not
++        // define it, and the template engine then refuses to write the script.
++        val unixTemplate = if (executableJarClass != null) {
++            unixScriptTemplate
++        } else {
++            val rewritten = temporaryFileProvider.createTemporaryFile("unixStartScript", ".txt")
++            val text = unixScriptTemplate.singleFile.readText(StandardCharsets.UTF_8)
++            rewritten.writeText(text.replace("\${gitRef}", gitRef), StandardCharsets.UTF_8)
++            project.files(rewritten)
++        }
++        val generator = StartScriptGenerator(
++            createUnixStartScriptGenerator(unixTemplate),
++            createWindowsStartScriptGenerator()
++        )
+         generator.setApplicationName("Gradle")
+-        generator.setGitRef(scriptTemplateGitRef.get())
+         generator.setOptsEnvironmentVar("GRADLE_OPTS")
+-        generator.setEntryPoint(ExecutableJar("lib/$launcherJarName"))
++        if (executableJarClass != null) {
++            generator.javaClass.getMethod("setGitRef", String::class.java).invoke(generator, gitRef)
++            val entry = executableJarClass.getConstructor(String::class.java).newInstance("lib/$launcherJarName")
++            val entryPointType = Class.forName("org.gradle.api.internal.plugins.AppEntryPoint")
++            generator.javaClass.getMethod("setEntryPoint", entryPointType).invoke(generator, entry)
++            generator.setClasspath(emptyList())
++        } else {
++            generator.setMainClassName("org.gradle.launcher.GradleMain")
++            generator.setClasspath(listOf("lib/$launcherJarName"))
++        }
+         generator.setScriptRelPath("bin/gradle")
+-        generator.setClasspath(emptyList())
+         generator.setAppNameSystemProperty("org.gradle.appname")
+         generator.setDefaultJvmOpts(listOf("-Xmx64m", "-Xms64m"))
+ 
+@@ -99,10 +127,10 @@
+     }
+ 
+     private
+-    fun createUnixStartScriptGenerator() = DefaultTemplateBasedStartScriptGenerator(
++    fun createUnixStartScriptGenerator(template: FileCollection) = DefaultTemplateBasedStartScriptGenerator(
+         TextUtil.getUnixLineSeparator(),
+         StartScriptTemplateBindingFactory.unix(),
+-        FileCollectionBackedTextResource(temporaryFileProvider, unixScriptTemplate, StandardCharsets.UTF_8)
++        FileCollectionBackedTextResource(temporaryFileProvider, template, StandardCharsets.UTF_8)
+     )
+ 
+     private
+--- a/build-logic/jvm/src/main/kotlin/gradlebuild.unittest-and-compile.gradle.kts
++++ b/build-logic/jvm/src/main/kotlin/gradlebuild.unittest-and-compile.gradle.kts
+@@ -240,8 +240,18 @@
+     @get:Input
+     abstract val embedded: Property<Boolean>
+ 
+-    override fun asArguments(): Iterable<String> =
+-        JpmsConfiguration.forDaemonProcesses(jvmVersion.get(), true)
++    override fun asArguments(): Iterable<String> {
++        // forDaemonProcesses arrived after 8.11. The bootstrap Gradle is 8.11.1,
++        // which exposes the same Java 9+ flags as GRADLE_DAEMON_JPMS_ARGS.
++        val cls = JpmsConfiguration::class.java
++        val modern = cls.methods.find { it.name == "forDaemonProcesses" }
++        val result = if (modern != null) {
++            modern.invoke(null, jvmVersion.get(), true)
++        } else {
++            cls.getField("GRADLE_DAEMON_JPMS_ARGS").get(null)
++        }
++        return if (result is Iterable<*>) result.filterIsInstance<String>() else emptyList()
++    }
+ }
+ 
+ fun Test.addOsAsInputs() {
+--- a/build-logic/kotlin-dsl-shared-runtime/src/main/kotlin/org/gradle/kotlin/dsl/internal/sharedruntime/codegen/ApiExtensionGeneratorFacade.kt
++++ b/build-logic/kotlin-dsl-shared-runtime/src/main/kotlin/org/gradle/kotlin/dsl/internal/sharedruntime/codegen/ApiExtensionGeneratorFacade.kt
+@@ -210,17 +210,21 @@
+ 
+             val extensionTypeParameters = function.typeParameters + type.typeParameters
+ 
++            // sequenceOf(T) is @SinceKotlin("2.2") and is absent from the Gradle 8.11
++            // bootstrap stdlib (2.0.20). The spread selects the varargs overload.
+             sequenceOf(
+-                KotlinExtensionFunction(
+-                    description = "Kotlin extension function ${if (candidateFor.javaClassToKotlinClass) "taking [kotlin.reflect.KClass] " else ""}for [${type.sourceName}.${function.name}]",
+-                    since = sinceSupplier(function.binarySignature),
+-                    isIncubating = function.isIncubating,
+-                    isDeprecated = function.isDeprecated,
+-                    typeParameters = extensionTypeParameters,
+-                    targetType = type,
+-                    name = function.name,
+-                    parameters = function.newMappedParameters().groovyNamedArgumentsToVarargs().javaClassToKotlinClass(),
+-                    returnType = function.returnType
++                *arrayOf(
++                    KotlinExtensionFunction(
++                        description = "Kotlin extension function ${if (candidateFor.javaClassToKotlinClass) "taking [kotlin.reflect.KClass] " else ""}for [${type.sourceName}.${function.name}]",
++                        since = sinceSupplier(function.binarySignature),
++                        isIncubating = function.isIncubating,
++                        isDeprecated = function.isDeprecated,
++                        typeParameters = extensionTypeParameters,
++                        targetType = type,
++                        name = function.name,
++                        parameters = function.newMappedParameters().groovyNamedArgumentsToVarargs().javaClassToKotlinClass(),
++                        returnType = function.returnType
++                    )
+                 )
+             )
+         }
+--- a/build-logic/packaging/src/main/kotlin/gradlebuild/packaging/tasks/GenerateClasspathModuleProperties.kt
++++ b/build-logic/packaging/src/main/kotlin/gradlebuild/packaging/tasks/GenerateClasspathModuleProperties.kt
+@@ -56,11 +56,13 @@
+     @get:Input
+     abstract val artifactNames: ListProperty<String>
+ 
++    // Gradle 8.11 cannot fingerprint a ProjectComponentIdentifier. Store a stable
++    // string instead. Gradle 9 accepts either form; the properties files are unchanged.
+     @get:Input
+-    abstract val artifactComponentIds: ListProperty<ComponentIdentifier>
++    abstract val artifactComponentIds: ListProperty<String>
+ 
+     @get:Nested
+-    abstract val graphNodes: MapProperty<ComponentIdentifier, GraphNode>
++    abstract val graphNodes: MapProperty<String, GraphNode>
+ 
+     @get:OutputDirectory
+     abstract val outputDir: DirectoryProperty
+@@ -78,7 +80,7 @@
+         )
+         this.artifactComponentIds.set(
+             artifacts.map {
+-                it.map { artifact -> artifact.id.componentIdentifier }
++                it.map { artifact -> artifact.id.componentIdentifier.stableId() }
+             }
+         )
+ 
+@@ -92,8 +94,8 @@
+     fun traverseGraph(
+         rootComponent: ResolvedComponentResult,
+         rootVariant: ResolvedVariantResult
+-    ): Map<ComponentIdentifier, GraphNode> {
+-        val result = mutableMapOf<ComponentIdentifier, GraphNode>()
++    ): Map<String, GraphNode> {
++        val result = mutableMapOf<String, GraphNode>()
+ 
+         val seen = mutableSetOf<ResolvedVariantResult>()
+         val queue = ArrayDeque<Pair<ResolvedComponentResult, ResolvedVariantResult>>()
+@@ -105,7 +107,7 @@
+             val (component, variant) = queue.removeFirst()
+             val dependencies = component.getDependenciesForVariant(variant)
+ 
+-            val dependencyComponents = mutableSetOf<ComponentIdentifier>()
++            val dependencyComponents = mutableSetOf<String>()
+             for (dependency in dependencies) {
+                 if (dependency.isConstraint) {
+                     continue
+@@ -119,7 +121,7 @@
+                 val targetVariant = resolvedDependency.resolvedVariant
+                 val targetComponent = resolvedDependency.selected
+ 
+-                dependencyComponents.add(targetComponent.id)
++                dependencyComponents.add(targetComponent.id.stableId())
+                 if (seen.add(targetVariant)) {
+                     queue.add(targetComponent to targetVariant)
+                 }
+@@ -130,7 +132,7 @@
+             if (variant != rootVariant) {
+                 val (moduleName, alias) = getIdentity(component)
+                 val existing = result.put(
+-                    component.id,
++                    component.id.stableId(),
+                     GraphNode(
+                         moduleName,
+                         alias,
+@@ -157,7 +159,7 @@
+     data class GraphNode(
+         @get:Input val moduleName: String,
+         @get:Nested @get:Optional val alias: ModuleAlias?,
+-        @get:Input val dependencyComponentIds: Set<ComponentIdentifier>
++        @get:Input val dependencyComponentIds: Set<String>
+     )
+ 
+     @TaskAction
+@@ -219,7 +221,7 @@
+     }
+ 
+     private
+-    fun Map<ComponentIdentifier, GraphNode>.getModuleName(identifier: ComponentIdentifier): String =
++    fun Map<String, GraphNode>.getModuleName(identifier: String): String =
+         get(identifier)?.moduleName ?: error("Dependency '$identifier' could not be found")
+ 
+ }
+@@ -288,6 +290,13 @@
+  * Module name used to reference a component in the distribution's runtime module registry.
+  * Returns `null` for component types that don't map to a distribution module.
+  */
++internal fun ComponentIdentifier.stableId(): String =
++    when (this) {
++        is ModuleComponentIdentifier -> "module:$group:$module:$version"
++        is ProjectComponentIdentifier -> "project:$projectPath"
++        else -> "other:${javaClass.name}:$displayName"
++    }
++
+ internal fun ComponentIdentifier.distributionModuleNameOrNull(): String? =
+     when (this) {
+         is ModuleComponentIdentifier -> module
+--- a/build-logic/packaging/src/main/kotlin/gradlebuild/packaging/tasks/GenerateLicenseFile.kt
++++ b/build-logic/packaging/src/main/kotlin/gradlebuild/packaging/tasks/GenerateLicenseFile.kt
+@@ -265,4 +265,13 @@
+     // All net.rubygrapefruit:native-platform-* artifacts are Apache 2.0 licensed but do not
+     // include <licenses> in their POMs (https://github.com/gradle/native-platform/issues/40)
+     "net.rubygrapefruit" to License.Apache2,
++    // Cooker sysjar POMs omit <licenses>. These are the upstream licenses.
++    "org.apache.maven" to License.Apache2,
++    "org.ow2.asm" to License.BSD3,
++    "org.jspecify" to License.Apache2,
++    "ch.randelshofer:fastdoubleparser" to License.Apache2,
++    "com.github.javaparser:javaparser-core" to License.Apache2,
++    "org.codehaus.mojo:animal-sniffer-annotations" to License.MIT,
++    "org.codehaus.plexus:plexus-sec-dispatcher" to License.Apache2,
++    "org.junit:junit-bom" to License.EPL2,
+ )
+--- a/build-logic/packaging/src/main/kotlin/gradlebuild/packaging/tasks/PathPrefixLister.kt
++++ b/build-logic/packaging/src/main/kotlin/gradlebuild/packaging/tasks/PathPrefixLister.kt
+@@ -45,9 +45,12 @@
+             include("**/*.class")
+         }.visit(object: EmptyFileVisitor() {
+             override fun visitFile(details: FileVisitDetails) {
+-                val parentPath = details.relativePath.parent
+-                if (parentPath != null) {
+-                    packageSet.add(parentPath.pathString)
++                // Package non-null defaults on Gradle 8.11 hide that getParent() can return null.
++                // Gradle 9 annotates it @Nullable. Erase the static type so the check compiles on both.
++                val parentPath: Any? = details.relativePath.parent
++                val path = (parentPath as? org.gradle.api.file.RelativePath)?.pathString
++                if (path != null) {
++                    packageSet.add(path)
+                 }
+             }
+         })
+--- a/build-logic/packaging/src/main/kotlin/gradlebuild.public-api-publish.gradle.kts
++++ b/build-logic/packaging/src/main/kotlin/gradlebuild.public-api-publish.gradle.kts
+@@ -120,9 +120,11 @@
+         { fileCollection -> fileCollection.elements.map { set -> set.map { file -> archiveOperations.zipTree(file.asFile) } }}
+     )) {
+         include { element ->
+-            val parent = element.relativePath.parent
+-            if (parent == null) false
+-            else pathPrefixes.get().contains(parent.pathString)
++            // Package non-null defaults on Gradle 8.11 hide that getParent() can return null.
++            // Gradle 9 annotates it @Nullable. Erase the static type so the check compiles on both.
++            val parent: Any? = element.relativePath.parent
++            val path = (parent as? org.gradle.api.file.RelativePath)?.pathString
++            if (path == null) false else pathPrefixes.get().contains(path)
+         }
+     }
+ 
+@@ -140,8 +142,10 @@
+ val gradleApiComponent = softwareComponentFactory.adhoc("gradleApi")
+ components.add(gradleApiComponent)
+ 
+-// Published component containing the public Gradle API
+-gradleApiComponent.addVariantsFromConfiguration(gradleApiElements) {
++// Published component containing the public Gradle API.
++// addVariantsFromConfiguration(Provider) is Gradle 9.2. Passing the realized
++// Configuration uses the overload that exists on 8.11 and 9.
++gradleApiComponent.addVariantsFromConfiguration(gradleApiElements.get()) {
+     mapToMavenScope("compile")
+ }
+ 
+@@ -149,20 +153,21 @@
+     outgoing.artifact(sourceJarTask)
+     outgoing.capability(internalBaseName.map { "$group:$it:$version" })
+     attributes {
+-        attribute(Category.CATEGORY_ATTRIBUTE, named(Category.DOCUMENTATION))
+-        attribute(DocsType.DOCS_TYPE_ATTRIBUTE, named(DocsType.SOURCES))
+-        attribute(Bundling.BUNDLING_ATTRIBUTE, named(Bundling.EXTERNAL))
+-        attribute(Usage.USAGE_ATTRIBUTE, named(Usage.JAVA_RUNTIME))
++        // AttributeContainer.named is Gradle 9.3. ObjectFactory.named is on 8.11 and 9.
++        attribute(Category.CATEGORY_ATTRIBUTE, objects.named(Category.DOCUMENTATION))
++        attribute(DocsType.DOCS_TYPE_ATTRIBUTE, objects.named(DocsType.SOURCES))
++        attribute(Bundling.BUNDLING_ATTRIBUTE, objects.named(Bundling.EXTERNAL))
++        attribute(Usage.USAGE_ATTRIBUTE, objects.named(Usage.JAVA_RUNTIME))
+     }
+ }
+ 
+-gradleApiComponent.addVariantsFromConfiguration(sourcesElements) {
++gradleApiComponent.addVariantsFromConfiguration(sourcesElements.get()) {
+     mapToOptional()
+ }
+ 
+ // Published component containing the legacy public Gradle API
+ val legacyGradleApiComponent = softwareComponentFactory.adhoc("legacyGradleApi")
+ components.add(legacyGradleApiComponent)
+-legacyGradleApiComponent.addVariantsFromConfiguration(legacyGradleApiElements) {
++legacyGradleApiComponent.addVariantsFromConfiguration(legacyGradleApiElements.get()) {
+     mapToMavenScope("compile")
+ }
+--- a/build-logic/settings.gradle.kts
++++ b/build-logic/settings.gradle.kts
+@@ -27,6 +27,14 @@
+     id("gradlebuild.default-settings-plugins")
+ }
+ 
++// pluginManagement.includeBuild exposes plugins only. Library coordinates such as
++// gradlebuild:basics are substituted from a real included build. The root settings
++// already includes build-logic-commons as a sibling, so include it here only when
++// this build is invoked directly (the 8.11.1 bootstrap uses -p build-logic).
++if (gradle.parent == null) {
++    includeBuild("../build-logic-commons")
++}
++
+ dependencyResolutionManagement {
+     repositories {
+         mavenCentral()
+--- a/build-logic/uber-plugins/src/main/kotlin/gradlebuild.distribution-module.gradle.kts
++++ b/build-logic/uber-plugins/src/main/kotlin/gradlebuild.distribution-module.gradle.kts
+@@ -78,7 +78,9 @@
+     dependencies {
+         apiGenDependencies(libs.findLibrary("kotlinJvmAbiGenEmbeddable").get().get().copy().apply {
+             version {
+-                strictly(embeddedKotlinVersion)
++                if (embeddedKotlinVersion.startsWith("2.4")) {
++                    strictly(embeddedKotlinVersion)
++                }
+             }
+         })
+     }
+--- a/build-logic-commons/basics/src/main/kotlin/gradlebuild/basics/XmlFactories.kt
++++ b/build-logic-commons/basics/src/main/kotlin/gradlebuild/basics/XmlFactories.kt
+@@ -35,6 +35,8 @@
+         setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
+         isExpandEntityReferences = false
+         setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true)
+-        setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "")
+-        setAttribute(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "")
++        // The Gradle API jar embeds xml-apis 1.4, whose XMLConstants hides the JDK
++        // class and has no ACCESS_EXTERNAL_* fields. The property URIs are stable.
++        setAttribute("http://javax.xml.XMLConstants/property/accessExternalDTD", "")
++        setAttribute("http://javax.xml.XMLConstants/property/accessExternalSchema", "")
+     }.newDocumentBuilder()
+--- a/build-logic-commons/basics/src/main/kotlin/gradlebuild/basics/transforms/Minify.kt
++++ b/build-logic-commons/basics/src/main/kotlin/gradlebuild/basics/transforms/Minify.kt
+@@ -113,11 +113,41 @@
+             if (result.exitValue != 0) {
+                 throw IllegalStateException("Could not minify $artifact:\n$log")
+             }
++            // Package filters drop classes but leave META-INF/services entries. The
++            // compiler then dies in ServiceLoader (ObjCOverridabilityCondition).
++            if (spec.removePackages.isNotEmpty()) {
++                stripRemovedServiceProviders(output, spec.removePackages)
++            }
+         } finally {
+             rules.delete()
+         }
+     }
+ 
++    private
++    fun stripRemovedServiceProviders(jar: File, removedPackages: Set<String>) {
++        FileSystems.newFileSystem(jar.toPath(), mapOf<String, Any>()).use { fs ->
++            val services = fs.getPath("/META-INF/services")
++            if (!Files.isDirectory(services)) {
++                return
++            }
++            Files.newDirectoryStream(services).use { stream ->
++                for (path in stream) {
++                    if (Files.isDirectory(path)) {
++                        continue
++                    }
++                    val lines = Files.readAllLines(path)
++                    val kept = lines.filter { line ->
++                        val trimmed = line.trim()
++                        trimmed.isEmpty() || trimmed.startsWith("#") || removedPackages.none { trimmed.startsWith("$it.") }
++                    }
++                    if (kept.size != lines.size) {
++                        Files.write(path, kept)
++                    }
++                }
++            }
++        }
++    }
++
+     private
+     fun generatedJdkJmods(): File {
+         val library = parameters.platformLibrary.asFile.get()
+--- a/build-logic-commons/basics/src/main/kotlin/gradlebuild/basics/util/ConfigurationExtensions.kt
++++ b/build-logic-commons/basics/src/main/kotlin/gradlebuild/basics/util/ConfigurationExtensions.kt
+@@ -21,14 +21,20 @@
+ import org.gradle.api.provider.Provider
+ import java.io.File
+ 
++// Gradle 9's Provider.map treats a null result as an absent value. Gradle 8.11's
++// MappingProvider throws if map returns null, so an empty configuration is an
++// absent provider via filter instead.
++private val absentSingleFile = File("\u0000gradle-absent-single-file")
++
++@Suppress("UnstableApiUsage")
+ fun Configuration.getSingleFileProvider(): Provider<File> {
+     val name = this.name
+-    return incoming.files.elements.map {
+-        require(it.size <= 1) {
+-            "Expected at most one file in configuration '$name' but found: $it"
++    return incoming.files.elements.map { files ->
++        require(files.size <= 1) {
++            "Expected at most one file in configuration '$name' but found: $files"
+         }
+-        it.firstOrNull()?.asFile
+-    }
++        files.firstOrNull()?.asFile ?: absentSingleFile
++    }.filter { it !== absentSingleFile }
+ }
+ 
+ fun NamedDomainObjectProvider<Configuration>.getSingleFileProvider(): Provider<File> {
+--- a/build-logic-commons/basics/src/main/kotlin/gradlebuild/basics/util/KotlinSourceParser.kt
++++ b/build-logic-commons/basics/src/main/kotlin/gradlebuild/basics/util/KotlinSourceParser.kt
+@@ -23,9 +23,9 @@
+ import org.jetbrains.kotlin.cli.jvm.compiler.KotlinCoreApplicationEnvironmentMode
+ import org.jetbrains.kotlin.cli.jvm.compiler.KotlinCoreProjectEnvironment
+ import org.jetbrains.kotlin.cli.jvm.compiler.setupIdeaStandaloneExecution
+-import org.jetbrains.kotlin.com.intellij.openapi.Disposable
+-import org.jetbrains.kotlin.com.intellij.openapi.util.Disposer
+-import org.jetbrains.kotlin.com.intellij.psi.PsiManager
++import com.intellij.openapi.Disposable
++import com.intellij.openapi.util.Disposer
++import com.intellij.psi.PsiManager
+ import org.jetbrains.kotlin.idea.KotlinFileType
+ import org.jetbrains.kotlin.parsing.KotlinParserDefinition
+ import org.jetbrains.kotlin.psi.KtFile
+@@ -85,7 +85,7 @@
+ /**
+  * The Kotlin compiler application environment shared by all live [KotlinCoreProjectEnvironment]s.
+  *
+- * It is expensive to create and installs a process-global [org.jetbrains.kotlin.com.intellij.openapi.application.Application].
++ * It is expensive to create and installs a process-global [com.intellij.openapi.application.Application].
+  * A single parsing spans multiple source roots, each kept open in its own project environment until the parsing
+  * is done, so they share one reference-counted application environment: created with the first project environment,
+  * disposed once the last is closed. Disposal resets the global `ApplicationManager`, keeping it out of the
+--- a/build-logic-commons/basics/src/main/kotlin/gradlebuild.minify.gradle.kts
++++ b/build-logic-commons/basics/src/main/kotlin/gradlebuild.minify.gradle.kts
+@@ -18,9 +18,9 @@
+ import gradlebuild.basics.classanalysis.Attributes.minified
+ import gradlebuild.basics.transforms.Minify
+ import gradlebuild.basics.transforms.MinifySpec
+-import org.gradle.api.internal.attributes.AttributesFactory
++import org.gradle.api.internal.GradleInternal
++import org.gradle.api.internal.attributes.ImmutableAttributes
+ import org.gradle.internal.component.external.model.DefaultModuleComponentSelector
+-import org.gradle.kotlin.dsl.support.serviceOf
+ 
+ /**
+  * A map from artifact name to a set of class name prefixes that should be kept.
+@@ -249,7 +249,23 @@
+         // This is yet another reason we need configuration factory methods.
+         // workaround for https://github.com/gradle/gradle/issues/12459
+         // note: constraints can't be used here because they end up in gradle module metadata
+-        val attributesFactory = gradle.serviceOf<AttributesFactory>()
++        // Gradle 9 registers AttributesFactory. The 8.11.1 bootstrap still registers
++        // ImmutableAttributesFactory. Both expose of(Attribute, T) -> ImmutableAttributes.
++        val attributesFactoryClass = listOf(
++            "org.gradle.api.internal.attributes.AttributesFactory",
++            "org.gradle.api.internal.attributes.ImmutableAttributesFactory",
++        ).firstNotNullOf { name ->
++            try {
++                Class.forName(name)
++            } catch (_: ClassNotFoundException) {
++                null
++            }
++        }
++        @Suppress("UNCHECKED_CAST")
++        val attributesFactory = (gradle as GradleInternal).services.get(attributesFactoryClass as Class<Any>)
++        val ofAttribute = attributesFactoryClass.methods.single { method ->
++            method.name == "of" && method.parameterCount == 2 && !method.isBridge
++        }
+         configurations.all {
+             if (isCanBeResolved && !isCanBeConsumed && name != libraryDependencies.name && !name.startsWith("jmh")) {
+                 resolutionStrategy.dependencySubstitution.all {
+@@ -258,7 +274,7 @@
+                         if ("${requested.group}:${requested.module}" == coordinates) {
+                             val updated = DefaultModuleComponentSelector.withAttributes(
+                                 requested,
+-                                attributesFactory.of(minified, true)
++                                ofAttribute.invoke(attributesFactory, minified, true) as ImmutableAttributes
+                             )
+                             useTarget(updated)
+                         }
+--- a/build-logic-commons/build-platform/build.gradle.kts
++++ b/build-logic-commons/build-platform/build.gradle.kts
+@@ -11,7 +11,10 @@
+         val distributionDependencies = versionCatalogs.named("buildLibs")
+         distributionDependencies.libraryAliases.forEach { alias ->
+             api(distributionDependencies.findLibrary(alias).get().map { module ->
+-                if (module.group == "org.jetbrains.kotlin") {
++                // Gradle 9's embedded Kotlin matches the catalog (2.4.x). The 8.11.1
++                // bootstrap embeds 2.0.20, and strictly() on that version cannot
++                // resolve the 2.4.21 compiler the distribution is built with.
++                if (module.group == "org.jetbrains.kotlin" && embeddedKotlinVersion.startsWith("2.4")) {
+                     module.copy().apply {
+                         version {
+                             strictly(embeddedKotlinVersion)
+--- a/build-logic-commons/gradle-plugin/build.gradle.kts
++++ b/build-logic-commons/gradle-plugin/build.gradle.kts
+@@ -13,7 +13,9 @@
+ 
+     api(platform(projects.buildPlatform))
+ 
+-    implementation("gradlebuild:build-platform-plugin")
++    // Same-build module coordinates are not substituted on the 8.11.1 bootstrap.
++    // Gradle 9 resolves this string to the project; the project dependency is that project.
++    implementation(project(":build-platform-plugin"))
+     implementation(projects.basics)
+     implementation(projects.moduleIdentity)
+ 
+--- a/build-logic-commons/gradle-plugin/src/main/kotlin/gradlebuild/testcleanup/TestFilesCleanupService.kt
++++ b/build-logic-commons/gradle-plugin/src/main/kotlin/gradlebuild/testcleanup/TestFilesCleanupService.kt
+@@ -20,7 +20,6 @@
+ import org.gradle.api.GradleException
+ import org.gradle.api.file.DirectoryProperty
+ import org.gradle.api.file.FileSystemOperations
+-import org.gradle.api.internal.tasks.testing.results.serializable.SerializableTestResultStore
+ import org.gradle.api.provider.Provider
+ import org.gradle.api.services.BuildService
+ import org.gradle.api.services.BuildServiceParameters
+@@ -34,9 +33,11 @@
+ import java.io.File
+ import java.io.FileOutputStream
+ import java.io.IOException
++import java.lang.reflect.Proxy
+ import java.nio.charset.StandardCharsets
+ import java.nio.file.Files
+ import java.nio.file.LinkOption
++import java.nio.file.Path
+ import java.util.concurrent.ConcurrentHashMap
+ import java.util.stream.Collectors
+ import java.util.zip.ZipEntry
+@@ -158,28 +159,42 @@
+      * publish.
+      *
+      * Note that an empty run is not the same as an empty result store: the store always holds the
+-     * root result of a task whose test JVM started, so [SerializableTestResultStore.hasResults] is
++     * root result of a task whose test JVM started, so hasResults is
+      * true even when nothing ran. The root is the only result written without a parent, and it is
+      * written last, so a result with a parent is an actual test class or test case.
+      */
+     private
+     fun readTestResults(taskPath: String): TestTaskResults? {
+         val binaryResultsDir = testTaskPathToBinaryResultsDir[taskPath] ?: return null
+-        val store = SerializableTestResultStore(binaryResultsDir.get().toPath())
+-        if (!store.hasResults()) {
++        // SerializableTestResultStore arrived after 8.11.1. The 8.11 bootstrap has no such class;
++        // returning null keeps the previous "archive this task's reports" behavior.
++        val storeClass = try {
++            Class.forName("org.gradle.api.internal.tasks.testing.results.serializable.SerializableTestResultStore")
++        } catch (_: ClassNotFoundException) {
++            return null
++        }
++        val store = storeClass.getConstructor(Path::class.java).newInstance(binaryResultsDir.get().toPath())
++        if (storeClass.getMethod("hasResults").invoke(store) != true) {
+             return TestTaskResults(ranAnyTest = false, containsFailedTest = false)
+         }
+         var ranAnyTest = false
+         var containsFailedTest = false
+-        store.forEachResult(SerializableTestResultStore.ResultProcessor { _, parentId, result, _ ->
+-            if (parentId != null) {
+-                ranAnyTest = true
+-            }
+-            // A task with a flaky result counts as failed, same as one with a plain failure
+-            if (result.resultType == TestResult.ResultType.FAILURE) {
+-                containsFailedTest = true
++        val processorClass = Class.forName("${storeClass.name}\$ResultProcessor")
++        val processor = Proxy.newProxyInstance(processorClass.classLoader, arrayOf(processorClass)) { _, method, args ->
++            if (method.name == "process" && args != null) {
++                val parentId = args[1]
++                val result = args[2]
++                if (parentId != null) {
++                    ranAnyTest = true
++                }
++                val resultType = result.javaClass.getMethod("getResultType").invoke(result)
++                if (resultType == TestResult.ResultType.FAILURE) {
++                    containsFailedTest = true
++                }
+             }
+-        })
++            null
++        }
++        storeClass.getMethod("forEachResult", processorClass).invoke(store, processor)
+         return TestTaskResults(ranAnyTest, containsFailedTest)
+     }
+ 
+--- a/build-logic-commons/gradle-plugin/src/main/kotlin/gradlebuild.private-javadoc.gradle.kts
++++ b/build-logic-commons/gradle-plugin/src/main/kotlin/gradlebuild.private-javadoc.gradle.kts
+@@ -37,7 +37,8 @@
+ // emits `reference not found` warnings independent of `-Xdoclint`).
+ val javadocReferences = configurations.dependencyScope("javadocReferences")
+ val javadocReferencesClasspath = configurations.resolvable("javadocReferencesClasspath") {
+-    extendsFrom(javadocReferences)
++    // Gradle 9 accepts a Provider. Gradle 8.11 only accepts Configuration.
++    extendsFrom(javadocReferences.get())
+     // Non-transitive: javadoc only needs the direct jar of each declared module to resolve
+     // its own types. Pulling transitives can introduce version conflicts (e.g. junit strict
+     // constraints in test-fixture chains) that have nothing to do with reference resolution.
+--- a/gradle/gradle-daemon-jvm.properties
++++ b/gradle/gradle-daemon-jvm.properties
+@@ -9,4 +9,6 @@
+ toolchainUrl.UNIX.X86_64=https\://api.foojay.io/disco/v3.0/ids/fa1e318c287360478e3c83a9a3ef1007/redirect
+ toolchainUrl.WINDOWS.AARCH64=https\://api.foojay.io/disco/v3.0/ids/7b3c4877c0749019e6805bb61e421497/redirect
+ toolchainUrl.WINDOWS.X86_64=https\://api.foojay.io/disco/v3.0/ids/d76df094a9cbbabd3b08251f9e61444a/redirect
+-toolchainVersion=25
++# Bootstrap Gradle 8.11.1 embeds Groovy 3.0.22 ASM, which rejects class major > 67.
++# The generated value 25 starts the daemon on JDK 25 and script compilation dies.
++toolchainVersion=21
+--- a/gradle/shared-with-buildSrc/mirrors.settings.gradle.kts
++++ b/gradle/shared-with-buildSrc/mirrors.settings.gradle.kts
+@@ -48,9 +48,11 @@
+         }
+         handler.all {
+             if (this is UrlArtifactRepository) {
+-                // see https://github.com/gradle/gradle/issues/37612
+-                @Suppress("USELESS_ELVIS")
+-                val currentUrl = this.url?.toString() ?: return@all
++                // Gradle 9 types url as URI?; 8.11 types it as URI. Erase the static
++                // type so the null check is valid for both script compilers.
++                val urlValue: Any? = this.url
++                val currentUrl = (urlValue as? java.net.URI)?.toString()
++                if (currentUrl == null) return@all
+                 originalUrls.forEach { name, originalUrl ->
+                     if (normalizeUrl(originalUrl) == normalizeUrl(currentUrl) && mirrorUrls.containsKey(name)) {
+                         mirrorUrls.get(name)?.let { this.setUrl(it) }
+--- a/platforms/core-configuration/declarative-dsl-core/build.gradle.kts
++++ b/platforms/core-configuration/declarative-dsl-core/build.gradle.kts
+@@ -3,7 +3,9 @@
+     id("gradlebuild.publish-public-libraries")
+     id("gradlebuild.kotlin-dsl-plugin-bundle-integ-tests")
+ 
+-    embeddedKotlin("plugin.serialization")
++    // 8.11's embeddedKotlin() requests this plugin at 2.0.20. The compiler
++    // plugin has to match kotlin-gradle-plugin 2.4.21.
++    id("org.jetbrains.kotlin.plugin.serialization") version "2.4.21"
+ }
+ 
+ description = "Common shared classes used by the Declarative DSL"
+--- a/platforms/core-configuration/declarative-dsl-core/src/main/kotlin/org/gradle/internal/declarativedsl/parsing/GrammarToTree.kt
++++ b/platforms/core-configuration/declarative-dsl-core/src/main/kotlin/org/gradle/internal/declarativedsl/parsing/GrammarToTree.kt
+@@ -76,10 +76,10 @@
+ import org.jetbrains.kotlin.KtNodeTypes.VALUE_ARGUMENT_LIST
+ import org.jetbrains.kotlin.KtNodeTypes.VALUE_ARGUMENT_NAME
+ import org.jetbrains.kotlin.KtNodeTypes.VALUE_PARAMETER_LIST
+-import org.jetbrains.kotlin.com.intellij.lang.LighterASTNode
+-import org.jetbrains.kotlin.com.intellij.lang.impl.PsiBuilderImpl
+-import org.jetbrains.kotlin.com.intellij.psi.TokenType.ERROR_ELEMENT
+-import org.jetbrains.kotlin.com.intellij.psi.tree.IElementType
++import com.intellij.lang.LighterASTNode
++import com.intellij.lang.impl.PsiBuilderImpl
++import com.intellij.psi.TokenType.ERROR_ELEMENT
++import com.intellij.psi.tree.IElementType
+ import org.jetbrains.kotlin.lexer.KtSingleValueToken
+ import org.jetbrains.kotlin.lexer.KtTokens
+ import org.jetbrains.kotlin.lexer.KtTokens.ARROW
+--- a/platforms/core-configuration/declarative-dsl-core/src/main/kotlin/org/gradle/internal/declarativedsl/parsing/LightTreeUtil.kt
++++ b/platforms/core-configuration/declarative-dsl-core/src/main/kotlin/org/gradle/internal/declarativedsl/parsing/LightTreeUtil.kt
+@@ -10,13 +10,13 @@
+ import org.jetbrains.kotlin.KtNodeTypes.LAMBDA_EXPRESSION
+ import org.jetbrains.kotlin.KtNodeTypes.PARENTHESIZED
+ import org.jetbrains.kotlin.KtNodeTypes.SCRIPT
+-import org.jetbrains.kotlin.com.intellij.lang.LighterASTNode
+-import org.jetbrains.kotlin.com.intellij.lang.impl.PsiBuilderImpl
+-import org.jetbrains.kotlin.com.intellij.openapi.util.Ref
+-import org.jetbrains.kotlin.com.intellij.psi.TokenType.ERROR_ELEMENT
+-import org.jetbrains.kotlin.com.intellij.psi.TokenType.WHITE_SPACE
+-import org.jetbrains.kotlin.com.intellij.psi.tree.IElementType
+-import org.jetbrains.kotlin.com.intellij.util.diff.FlyweightCapableTreeStructure
++import com.intellij.lang.LighterASTNode
++import com.intellij.lang.impl.PsiBuilderImpl
++import com.intellij.openapi.util.Ref
++import com.intellij.psi.TokenType.ERROR_ELEMENT
++import com.intellij.psi.TokenType.WHITE_SPACE
++import com.intellij.psi.tree.IElementType
++import com.intellij.util.diff.FlyweightCapableTreeStructure
+ import org.jetbrains.kotlin.diagnostics.isExpression
+ import org.jetbrains.kotlin.lexer.KtTokens.COMMENTS
+ import org.jetbrains.kotlin.lexer.KtTokens.SEMICOLON
+--- a/platforms/core-configuration/declarative-dsl-core/src/main/kotlin/org/gradle/internal/declarativedsl/parsing/Parser.kt
++++ b/platforms/core-configuration/declarative-dsl-core/src/main/kotlin/org/gradle/internal/declarativedsl/parsing/Parser.kt
+@@ -1,7 +1,7 @@
+ package org.gradle.internal.declarativedsl.parsing
+ 
+ import org.intellij.lang.annotations.Language
+-import org.jetbrains.kotlin.com.intellij.lang.impl.PsiBuilderFactoryImpl
++import com.intellij.lang.impl.PsiBuilderFactoryImpl
+ import org.jetbrains.kotlin.lexer.KotlinLexer
+ import org.jetbrains.kotlin.parsing.KotlinLightParser
+ import org.jetbrains.kotlin.parsing.KotlinParserDefinition
+--- a/platforms/core-configuration/declarative-dsl-evaluator/build.gradle.kts
++++ b/platforms/core-configuration/declarative-dsl-evaluator/build.gradle.kts
+@@ -18,7 +18,9 @@
+     id("gradlebuild.distribution.implementation-kotlin")
+     id("gradlebuild.publish-public-libraries")
+ 
+-    embeddedKotlin("plugin.serialization")
++    // 8.11's embeddedKotlin() requests this plugin at 2.0.20. The compiler
++    // plugin has to match kotlin-gradle-plugin 2.4.21.
++    id("org.jetbrains.kotlin.plugin.serialization") version "2.4.21"
+ }
+ 
+ description = "The evaluation pipeline for the Declarative language"
+--- a/platforms/core-runtime/internal-instrumentation-processor/src/main/java/org/gradle/internal/instrumentation/processor/AbstractInstrumentationProcessor.java
++++ b/platforms/core-runtime/internal-instrumentation-processor/src/main/java/org/gradle/internal/instrumentation/processor/AbstractInstrumentationProcessor.java
+@@ -42,6 +42,7 @@
+ import javax.lang.model.element.Element;
+ import javax.lang.model.element.ExecutableElement;
+ import javax.lang.model.element.PackageElement;
++import javax.lang.model.element.RecordComponentElement;
+ import javax.lang.model.element.TypeElement;
+ import javax.lang.model.type.TypeMirror;
+ import javax.lang.model.util.ElementScanner8;
+@@ -78,7 +79,14 @@
+ 
+     @Override
+     public Set<String> getSupportedAnnotationTypes() {
+-        return getSupportedAnnotations().stream().map(Class::getName).collect(Collectors.toSet());
++        // javac drops -A options from the unmatched set only for processors it
++        // actually runs. Instrumented projects pass
++        // -Aorg.gradle.annotation.processing.instrumented.project on every
++        // compilation, including compilations that contain none of the
++        // instrumentation annotations. "*" makes this processor run in that
++        // case so -Werror does not reject the option. process() still visits
++        // only the annotations from getSupportedAnnotations().
++        return Collections.singleton("*");
+     }
+ 
+     @Override
+@@ -239,5 +247,12 @@
+             scan(e.getTypeParameters(), p);
+             return super.visitExecutable(e, p);
+         }
++
++        @Override
++        public Set<Element> visitRecordComponent(RecordComponentElement e, Set<TypeElement> p) {
++            // ElementScanner6.visitRecordComponent calls visitUnknown, which throws on JDK 16+.
++            // The component's own annotations are recorded by scan() before this is called.
++            return scan(e.getEnclosedElements(), p);
++        }
+     }
+ }
+--- a/platforms/core-runtime/wrapper-main/build.gradle.kts
++++ b/platforms/core-runtime/wrapper-main/build.gradle.kts
+@@ -14,16 +14,10 @@
+  * limitations under the License.
+  */
+ 
+-import com.gradleup.gr8.FilterTransform
+-import gradlebuild.basics.launcherDebuggingIsEnabled
+-import org.gradle.api.artifacts.type.ArtifactTypeDefinition
+-import java.nio.file.Files
+-import java.nio.file.StandardCopyOption
+ import java.util.jar.Attributes
+ 
+ plugins {
+     id("gradlebuild.distribution.api-java")
+-    alias(buildLibs.plugins.gr8)
+     id("gradlebuild.cross-version-tests")
+ }
+ 
+@@ -84,50 +78,10 @@
+     from(sourceSets.main.get().output)
+ }
+ 
+-// Using Gr8 plugin with ProGuard to minify the wrapper JAR.
+-// This minified JAR is added to the project root when the wrapper task is used.
+-// It is embedded in the main JAR as a resource called `/gradle-wrapper.jar.`
+-gr8.registerFilterTransform(listOf("META-INF/.*"))
+-
+-val filteredRuntimeClasspath = configurations.runtimeClasspath.get().incoming.artifactView {
+-    attributes.attribute(ArtifactTypeDefinition.ARTIFACT_TYPE_ATTRIBUTE, FilterTransform.artifactType)
+-}.files
+-
+-val shadowedWrapperJar = gr8.create("gr") {
+-    addProgramJarsFrom(executableJar.flatMap { it.archiveFile })
+-    addProgramJarsFrom(filteredRuntimeClasspath)
+-    proguardFile("src/main/proguard/wrapper.pro")
+-    systemClassesToolchain {
+-        languageVersion = jvmCompile.compilations.named("main")
+-            .flatMap { it.targetJvmVersion }
+-            .map { JavaLanguageVersion.of(it) }
+-    }
+-}
+-
+-// https://github.com/gradle/gradle/issues/26658
+-// Before introducing gr8, wrapper jar is generated as build/libs/gradle-wrapper.jar and used in promotion build
+-// After introducing gr8, wrapper jar is generated as build/libs/gradle-wrapper-executable.jar and processed
+-//   by gr8, then the processed `gradle-wrapper.jar` need to be copied back to build/libs for promotion build
+-val copyGr8OutputJarAsGradleWrapperJar = tasks.register("copyGr8OutputJarAsGradleWrapperJar") {
+-    group = "build"
+-    description = "Copies the Gr8-minified wrapper JAR back to build/libs/gradle-wrapper.jar for the promotion build."
+-    // Declare file inputs and outputs
+-    // We use a custom task to not have Copy "own" its output directory when copying a single file
+-    val source = shadowedWrapperJar
+-    val target = layout.buildDirectory.dir("libs").map { it.file("gradle-wrapper.jar") }
+-
+-    inputs.file(source)
+-    outputs.file(target)
+-    // Do the copy with a simple JDK copy action
+-    doLast {
+-        Files.copy(
+-            source.get().asFile.toPath(),
+-            target.get().asFile.toPath(),
+-            StandardCopyOption.REPLACE_EXISTING
+-        )
+-    }
+-}
+-
++// com.gradleup.gr8 0.11.2 minifies this jar with R8, and that plugin downloads a
++// prebuilt R8 binary. Cooker does not ship R8. Embed the unminified executable
++// jar instead. That is the same resource the upstream debug path already uses,
++// and the distribution launcher runs the module jars rather than this copy.
+ val debuggableJar = tasks.register<Jar>("debuggableJar") {
+     group = "build"
+     description = "Builds an unminified wrapper JAR so the launcher can be debugged."
+@@ -139,14 +93,7 @@
+ }
+ 
+ tasks.jar {
+-    if (launcherDebuggingIsEnabled) { // shadowing and minification prevents debugging
+-        from(debuggableJar)
+-    } else {
+-        from(shadowedWrapperJar) {
+-            rename { "gradle-wrapper.jar" }
+-        }
+-        dependsOn(copyGr8OutputJarAsGradleWrapperJar)
+-    }
++    from(debuggableJar)
+ }
+ 
+ 
+--- a/platforms/native/plugins-model-native/src/main/java/org/gradle/nativeplatform/internal/NativeDependentBinariesResolutionStrategy.java
++++ b/platforms/native/plugins-model-native/src/main/java/org/gradle/nativeplatform/internal/NativeDependentBinariesResolutionStrategy.java
+@@ -47,9 +47,9 @@
+ import java.util.List;
+ import java.util.Map;
+ import java.util.Set;
++import java.time.Duration;
+ import java.util.concurrent.Callable;
+ import java.util.concurrent.ExecutionException;
+-import java.util.concurrent.TimeUnit;
+ 
+ import static com.google.common.base.Preconditions.checkNotNull;
+ 
+@@ -93,11 +93,11 @@
+     private final ProjectModelResolver projectModelResolver;
+     private final Cache<String, State> stateCache = CacheBuilder.newBuilder()
+         .maximumSize(1)
+-        .expireAfterAccess(10, TimeUnit.SECONDS)
++        .expireAfterAccess(Duration.ofSeconds(10))
+         .build();
+     private final Cache<NativeBinarySpecInternal, List<DependentBinariesResolvedResult>> resultsCache = CacheBuilder.newBuilder()
+         .maximumSize(3000)
+-        .expireAfterAccess(10, TimeUnit.SECONDS)
++        .expireAfterAccess(Duration.ofSeconds(10))
+         .build();
+ 
+     private TestSupport testSupport;
+--- a/platforms/software/build-init/src/main/java/org/gradle/unexported/buildinit/plugins/internal/maven/Maven2Gradle.java
++++ b/platforms/software/build-init/src/main/java/org/gradle/unexported/buildinit/plugins/internal/maven/Maven2Gradle.java
+@@ -21,7 +21,6 @@
+ import org.apache.maven.model.PluginExecution;
+ import org.apache.maven.model.Repository;
+ import org.apache.maven.project.MavenProject;
+-import org.apache.maven.repository.RepositorySystem;
+ import org.codehaus.plexus.util.xml.Xpp3Dom;
+ import org.gradle.api.JavaVersion;
+ import org.gradle.api.artifacts.ModuleIdentifier;
+@@ -312,7 +311,8 @@
+ 
+     private void getRepositoriesForModule(MavenProject module, Set<String> repoSet) {
+         for (Repository repo : module.getRepositories()) {
+-            if (repo.getId().equals(RepositorySystem.DEFAULT_REMOTE_REPO_ID)) {
++            // RepositorySystem.DEFAULT_REMOTE_REPO_ID. That type is deprecated in Maven 3.10.
++            if (repo.getId().equals("central")) {
+                 repoSet.add(RepositoryHandler.MAVEN_CENTRAL_URL);
+             } else {
+                 repoSet.add(repo.getUrl());
+--- a/platforms/software/dependency-management/src/main/java/org/gradle/api/internal/artifacts/ivyservice/resolveengine/store/CachedStoreFactory.java
++++ b/platforms/software/dependency-management/src/main/java/org/gradle/api/internal/artifacts/ivyservice/resolveengine/store/CachedStoreFactory.java
+@@ -26,7 +26,7 @@
+ import org.gradle.internal.time.Timer;
+ 
+ import java.io.Closeable;
+-import java.util.concurrent.TimeUnit;
++import java.time.Duration;
+ import java.util.concurrent.atomic.AtomicLong;
+ import java.util.function.Supplier;
+ 
+@@ -42,7 +42,7 @@
+ 
+     public CachedStoreFactory(String displayName) {
+         this.displayName = displayName;
+-        cache = CacheBuilder.newBuilder().maximumSize(CACHE_SIZE).expireAfterAccess(CACHE_EXPIRY, TimeUnit.MILLISECONDS).build();
++        cache = CacheBuilder.newBuilder().maximumSize(CACHE_SIZE).expireAfterAccess(Duration.ofMillis(CACHE_EXPIRY)).build();
+         stats = new Stats();
+     }
+ 
+--- a/settings.gradle.kts
++++ b/settings.gradle.kts
+@@ -348,7 +348,8 @@
+ 
+ rootProject.name = "gradle"
+ 
+-FeaturePreviews.Feature.entries.forEach { feature ->
++// Gradle 8.11 compiles Kotlin DSL scripts as language 1.8. Enum.entries needs 1.9.
++FeaturePreviews.Feature.values().forEach { feature ->
+     if (feature.isActive) {
+         enableFeaturePreview(feature.name)
+     }
+--- a/testing/architecture-test/build.gradle.kts
++++ b/testing/architecture-test/build.gradle.kts
+@@ -39,7 +39,8 @@
+ // DistributionArtifactScope attribute. Transitive projects that do not advertise this attribute
+ // remain compatible via Gradle's default compatibility process.
+ val distributionRuntime = configurations.resolvable("distributionRuntime") {
+-    extendsFrom(distributionRuntimeDependencies)
++    // Gradle 8.11 extendsFrom takes Configuration. The Provider overload is 9.2+.
++    extendsFrom(distributionRuntimeDependencies.get())
+     attributes {
+         attribute(Usage.USAGE_ATTRIBUTE, objects.named<Usage>(Usage.JAVA_RUNTIME))
+         attribute(Category.CATEGORY_ATTRIBUTE, objects.named<Category>(Category.LIBRARY))
+--- a/testing/precondition-tester/build.gradle.kts
++++ b/testing/precondition-tester/build.gradle.kts
+@@ -64,10 +64,11 @@
+ }
+ 
+ configurations.integTestImplementation {
+-    extendsFrom(configurations.testImplementation)
++    // Gradle 8.11 extendsFrom takes Configuration. The Provider overload is 9.2+.
++    extendsFrom(configurations.testImplementation.get())
+ }
+ configurations.crossVersionTestImplementation {
+-    extendsFrom(configurations.testImplementation)
++    extendsFrom(configurations.testImplementation.get())
+ }
+ 
+ tasks {
+--- /dev/null
++++ b/build-logic-settings/architecture-docs/src/main/kotlin/gradlebuild/SettingsDirectoryCompat.kt
+@@ -0,0 +1,25 @@
++package gradlebuild
++
++import org.gradle.api.file.Directory
++import org.gradle.api.file.ProjectLayout
++import java.io.File
++
++/**
++ * Bootstrap stand-in for ProjectLayout.settingsDirectory (Gradle 8.13+).
++ * Visible in this package without an import. A real member wins when this
++ * tree is later compiled by Gradle 9.
++ */
++val ProjectLayout.settingsDirectory: Directory
++    get() {
++        val projectDir = projectDirectory.asFile
++        var dir: File? = projectDir
++        var rel = ""
++        while (dir != null) {
++            if (File(dir, "settings.gradle.kts").isFile || File(dir, "settings.gradle").isFile) {
++                return if (rel.isEmpty()) projectDirectory else projectDirectory.dir(rel)
++            }
++            rel = if (rel.isEmpty()) ".." else "../$rel"
++            dir = dir.parentFile
++        }
++        return projectDirectory
++    }
