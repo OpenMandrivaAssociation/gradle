@@ -87,6 +87,7 @@ BuildRequires:	file-tree-views
 BuildRequires:	flexmark
 BuildRequires:	freemarker
 BuildRequires:	geantyref
+BuildRequires:	git
 BuildRequires:	gmetrics
 BuildRequires:	google-android-annotations
 BuildRequires:	google-api-client
