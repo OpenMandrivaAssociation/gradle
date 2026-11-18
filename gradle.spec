@@ -40,6 +40,7 @@ BuildRequires:	apache-commons-io
 BuildRequires:	apache-commons-lang3
 BuildRequires:	apache-commons-logging
 BuildRequires:	apache-commons-net
+BuildRequires:	apache-commons-parent
 BuildRequires:	apache-commons-vfs
 BuildRequires:	apache-groovy
 BuildRequires:	apache-sshd
@@ -103,6 +104,7 @@ BuildRequires:	gradle-incap
 BuildRequires:	grolifant
 BuildRequires:	grpc-context
 BuildRequires:	guava
+BuildRequires:	guice-parent
 BuildRequires:	guice-servlet
 BuildRequires:	hamcrest
 BuildRequires:	hashmap-util
@@ -113,6 +115,7 @@ BuildRequires:	istack-commons-runtime
 BuildRequires:	ivy
 BuildRequires:	j2objc-annotations
 BuildRequires:	jackson-annotations
+BuildRequires:	jackson-bom
 BuildRequires:	jackson-core
 BuildRequires:	jackson-databind
 BuildRequires:	jackson-dataformat-cbor
@@ -121,6 +124,7 @@ BuildRequires:	jackson-dataformat-yaml
 BuildRequires:	jackson-datatype-guava
 BuildRequires:	jackson-module-kotlin
 BuildRequires:	jackson-modules-java8
+BuildRequires:	jackson-parent
 BuildRequires:	jakarta-activation-api
 BuildRequires:	jakarta-annotations
 BuildRequires:	jakarta-el
@@ -174,6 +178,7 @@ BuildRequires:	jnr-constants
 BuildRequires:	jnr-enxio
 BuildRequires:	jnr-ffi
 BuildRequires:	jnr-netdb
+BuildRequires:	jnr-parent
 BuildRequires:	jnr-posix
 BuildRequires:	jnr-unixsocket
 BuildRequires:	jnr-x86asm
@@ -226,6 +231,7 @@ BuildRequires:	log4j
 BuildRequires:	log4j-over-slf4j2
 BuildRequires:	log4j12
 BuildRequires:	maven
+BuildRequires:	maven-components
 BuildRequires:	maven-shared-utils
 BuildRequires:	maven-wagon
 BuildRequires:	maven-xml
@@ -258,7 +264,9 @@ BuildRequires:	plexus-build-api
 BuildRequires:	plexus-cipher
 BuildRequires:	plexus-classworlds
 BuildRequires:	plexus-containers-component-annotations
+BuildRequires:	plexus-containers-parent
 BuildRequires:	plexus-interpolation
+BuildRequires:	plexus-pom
 BuildRequires:	plexus-sec-dispatcher
 BuildRequires:	plexus-utils
 BuildRequires:	plexus-xml
@@ -294,6 +302,7 @@ BuildRequires:	sjson-new-scalajson
 BuildRequires:	slf4j2
 BuildRequires:	snakeyaml
 BuildRequires:	software-and-algorithms
+BuildRequires:	sonatype-oss-parent
 BuildRequires:	spock-core
 BuildRequires:	stax2-api
 BuildRequires:	stringtemplate4
