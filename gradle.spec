@@ -11,7 +11,7 @@
 %global debug_package %{nil}
 
 Name:		gradle
-Version:	9.9.1
+Version:	9.9.2
 Release:	1
 Summary:	The Gradle build tool
 License:	Apache 2.0

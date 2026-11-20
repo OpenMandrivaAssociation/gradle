@@ -941,14 +941,15 @@
      id("gradlebuild.cross-version-tests")
  }
  
-@@ -84,50 +78,10 @@
+@@ -84,51 +78,10 @@
      from(sourceSets.main.get().output)
  }
  
 -// Using Gr8 plugin with ProGuard to minify the wrapper JAR.
 -// This minified JAR is added to the project root when the wrapper task is used.
 -// It is embedded in the main JAR as a resource called `/gradle-wrapper.jar.`
--gr8.registerFilterTransform(listOf("META-INF/.*"))
+-// Ignore module descriptors as they are not relevant
+-gr8.registerFilterTransform(listOf("META-INF/.*", "module-info\\.class"))
 -
 -val filteredRuntimeClasspath = configurations.runtimeClasspath.get().incoming.artifactView {
 -    attributes.attribute(ArtifactTypeDefinition.ARTIFACT_TYPE_ATTRIBUTE, FilterTransform.artifactType)
@@ -989,14 +990,14 @@
 -    }
 -}
 -
-+// com.gradleup.gr8 0.11.2 minifies this jar with R8, and that plugin downloads a
-+// prebuilt R8 binary. Cooker does not ship R8. Embed the unminified executable
-+// jar instead. That is the same resource the upstream debug path already uses,
-+// and the distribution launcher runs the module jars rather than this copy.
++// The R8 minifier plugin downloads a prebuilt binary. Cooker does not
++// ship that binary. Embed the unminified executable jar instead. That is
++// the same resource the upstream debug path already uses, and the
++// distribution launcher runs the module jars rather than this copy.
  val debuggableJar = tasks.register<Jar>("debuggableJar") {
      group = "build"
      description = "Builds an unminified wrapper JAR so the launcher can be debugged."
-@@ -139,14 +93,7 @@
+@@ -140,18 +93,9 @@
  }
  
  tasks.jar {
@@ -1011,34 +1012,11 @@
 +    from(debuggableJar)
  }
  
- 
---- a/platforms/native/plugins-model-native/src/main/java/org/gradle/nativeplatform/internal/NativeDependentBinariesResolutionStrategy.java
-+++ b/platforms/native/plugins-model-native/src/main/java/org/gradle/nativeplatform/internal/NativeDependentBinariesResolutionStrategy.java
-@@ -47,9 +47,9 @@
- import java.util.List;
- import java.util.Map;
- import java.util.Set;
-+import java.time.Duration;
- import java.util.concurrent.Callable;
- import java.util.concurrent.ExecutionException;
--import java.util.concurrent.TimeUnit;
- 
- import static com.google.common.base.Preconditions.checkNotNull;
- 
-@@ -93,11 +93,11 @@
-     private final ProjectModelResolver projectModelResolver;
-     private final Cache<String, State> stateCache = CacheBuilder.newBuilder()
-         .maximumSize(1)
--        .expireAfterAccess(10, TimeUnit.SECONDS)
-+        .expireAfterAccess(Duration.ofSeconds(10))
-         .build();
-     private final Cache<NativeBinarySpecInternal, List<DependentBinariesResolvedResult>> resultsCache = CacheBuilder.newBuilder()
-         .maximumSize(3000)
--        .expireAfterAccess(10, TimeUnit.SECONDS)
-+        .expireAfterAccess(Duration.ofSeconds(10))
-         .build();
- 
-     private TestSupport testSupport;
+-
+-
+ errorprone {
+     nullawayEnabled = true
+ }
 --- a/platforms/software/build-init/src/main/java/org/gradle/unexported/buildinit/plugins/internal/maven/Maven2Gradle.java
 +++ b/platforms/software/build-init/src/main/java/org/gradle/unexported/buildinit/plugins/internal/maven/Maven2Gradle.java
 @@ -21,7 +21,6 @@
@@ -1059,26 +1037,6 @@
                  repoSet.add(RepositoryHandler.MAVEN_CENTRAL_URL);
              } else {
                  repoSet.add(repo.getUrl());
---- a/platforms/software/dependency-management/src/main/java/org/gradle/api/internal/artifacts/ivyservice/resolveengine/store/CachedStoreFactory.java
-+++ b/platforms/software/dependency-management/src/main/java/org/gradle/api/internal/artifacts/ivyservice/resolveengine/store/CachedStoreFactory.java
-@@ -26,7 +26,7 @@
- import org.gradle.internal.time.Timer;
- 
- import java.io.Closeable;
--import java.util.concurrent.TimeUnit;
-+import java.time.Duration;
- import java.util.concurrent.atomic.AtomicLong;
- import java.util.function.Supplier;
- 
-@@ -42,7 +42,7 @@
- 
-     public CachedStoreFactory(String displayName) {
-         this.displayName = displayName;
--        cache = CacheBuilder.newBuilder().maximumSize(CACHE_SIZE).expireAfterAccess(CACHE_EXPIRY, TimeUnit.MILLISECONDS).build();
-+        cache = CacheBuilder.newBuilder().maximumSize(CACHE_SIZE).expireAfterAccess(Duration.ofMillis(CACHE_EXPIRY)).build();
-         stats = new Stats();
-     }
- 
 --- a/settings.gradle.kts
 +++ b/settings.gradle.kts
 @@ -348,7 +348,8 @@
@@ -1119,7 +1077,7 @@
  }
  
  tasks {
---- /dev/null
+--- a/build-logic-settings/architecture-docs/src/main/kotlin/gradlebuild/SettingsDirectoryCompat.kt
 +++ b/build-logic-settings/architecture-docs/src/main/kotlin/gradlebuild/SettingsDirectoryCompat.kt
 @@ -0,0 +1,25 @@
 +package gradlebuild
