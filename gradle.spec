@@ -1,6 +1,6 @@
-# Built from source. The bootstrap compiler is the Gradle package already
-# in cooker (8.11.1). native-platform and gradle-fileevents are embedded in
-# the distribution, so this package is built for each architecture.
+# Built from source. The bootstrap compiler is gradle-bootstrap 8.11.1.
+# native-platform and gradle-fileevents are embedded in the distribution,
+# so this package is built for each architecture.
 
 %global __jar_repack 0
 %global __provides_exclude_from .*
@@ -97,7 +97,7 @@ BuildRequires:	google-guice
 BuildRequires:	google-http-client
 BuildRequires:	google-java-format
 BuildRequires:	google-oauth-client
-BuildRequires:	gradle
+BuildRequires:	gradle-bootstrap
 BuildRequires:	gradle-errorprone-plugin
 BuildRequires:	gradle-fileevents
 BuildRequires:	gradle-idea-ext
